@@ -21,8 +21,7 @@ typedef struct {
     int spectroSize; 
 } streamCallbackData;
 
-// Callback data, persisted between calls. Allows us to access the data it
-// contains from within the callback function.
+// Callback data, persisted between calls..
 static streamCallbackData* spectroData;
 
 // Checks the return value of a PortAudio function. Logs the message and exits
@@ -40,14 +39,13 @@ static inline float min(float a, float b) {
 }
 
 // PortAudio stream callback function. Will be called after every
-// `FRAMES_PER_BUFFER` audio samples PortAudio captures. Used to process the
-// resulting audio sample.
+// `FRAMES_PER_BUFFER` audio samples PortAudio captures. 
 static int streamCallback(
     const void* inputBuffer, void* outputBuffer, unsigned long framesPerBuffer,
     const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags,
     void* userData
 ) {
-    // Cast our input buffer to a float pointer (since our sample format is `paFloat32`)
+    // Cast input buffer to a float pointer 
     float* in = (float*)inputBuffer;
 
     // We will not be modifying the output buffer. This line is a no-op.
@@ -56,8 +54,7 @@ static int streamCallback(
     // Cast our user data to streamCallbackData* so we can access its struct members
     streamCallbackData* callbackData = (streamCallbackData*)userData;
 
-    // Set our spectrogram size in the terminal to 100 characters, and move the
-    // cursor to the beginning of the line
+    // Set our spectrogram size in the terminal to 100 characters
     int dispSize = 100;
     printf("\r");
 
@@ -66,7 +63,7 @@ static int streamCallback(
         callbackData->in[i] = in[i * NUM_CHANNELS];
     }
 
-    // Perform FFT on callbackData->in (results will be stored in callbackData->out)
+    // Perform FFT on callbackData->in
     fftw_execute(callbackData->p);
 
     // Draw the spectrogram
@@ -150,9 +147,8 @@ int main() {
         printf("  defaultSampleRate: %f\n", deviceInfo->defaultSampleRate);
     }
 
-    // Use device 0 (for a programmatic solution for choosing a device,
-    // `numDevices - 1` is typically the 'default' device
-    int device = 4;
+
+    int device = 3;
 
     // Define stream capture specifications
     PaStreamParameters inputParameters;
@@ -177,11 +173,11 @@ int main() {
     );
     checkErr(err);
 
-    // Begin capturing audio
+    // Start capturing audio
     err = Pa_StartStream(stream);
     checkErr(err);
 
-    // Wait 30 seconds (PortAudio will continue to capture audio)
+    // Wait 30 seconds
     Pa_Sleep(30 * 1000);
 
     // Stop capturing audio
