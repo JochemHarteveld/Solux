@@ -3,9 +3,8 @@
 #include <cstring>
 #include <cmath>
 
-#include <portaudio.h> // PortAudio: Used for audio capture
-#include <fftw3.h>     // FFTW:      Provides a discrete FFT algorithm to get
-                       //            frequency data from captured audio
+#include <portaudio.h> 
+#include <fftw3.h>   
 
 #define SAMPLE_RATE 44100.0   
 #define FRAMES_PER_BUFFER 512
@@ -14,13 +13,12 @@
 #define SPECTRO_FREQ_START 20  
 #define SPECTRO_FREQ_END 20000 
 
-// Define our callback data (data that is passed to every callback function call)
 typedef struct {
-    double* in;      // Input buffer, will contain our audio sample
-    double* out;     // Output buffer, FFTW will write to this based on the input buffer's contents
-    fftw_plan p;     // Created by FFTW to facilitate FFT calculation
-    int startIndex;  // First index of our FFT output to display in the spectrogram
-    int spectroSize; // Number of elements in our FFT output to display from the start index
+    double* in;      // Input buffer
+    double* out;     // Output buffer
+    fftw_plan p;     
+    int startIndex;  
+    int spectroSize; 
 } streamCallbackData;
 
 // Callback data, persisted between calls. Allows us to access the data it
@@ -154,7 +152,7 @@ int main() {
 
     // Use device 0 (for a programmatic solution for choosing a device,
     // `numDevices - 1` is typically the 'default' device
-    int device = 2;
+    int device = 4;
 
     // Define stream capture specifications
     PaStreamParameters inputParameters;
