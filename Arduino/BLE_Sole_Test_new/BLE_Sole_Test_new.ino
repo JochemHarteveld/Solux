@@ -1,11 +1,15 @@
 #include <ArduinoBLE.h>
 #include <FastLED.h>
+#include <arduinoFFT.h>
 
 #define LED_PIN     2    // Change this to the GPIO pin connected to the data pin of the LED strip
-#define NUM_LEDS    300   // Change this to the number of LEDs in your strip
+#define NUM_LEDS_PER_STRIP 30
+#define NUM_STRIPS 5
+#define NUM_LEDS (NUM_LEDS_PER_STRIP * NUM_STRIPS)
 #define LED_TYPE    SK6812
 #define COLOR_ORDER GRB
 
+#define MIC_PIN 35
 #define LDR_PIN     34   // Analog pin connected to LDR
 #define NUM_SAMPLES 10   // Number of samples for the moving average
 
@@ -24,12 +28,25 @@ int currentPalette = 0; // Current color palette
 unsigned long lastUpdate = 0; // Last update time
 const int updateInterval = 50; // Update interval in milliseconds
 
+
+const uint16_t samples = 512;       // Must be a power of 2
+const double samplingFrequency = 10000; // Hz, must be less than 10000 due to ADC limitations
+unsigned int samplingPeriodUs;
+unsigned long microseconds;
+
+double vReal[samples];
+double vImag[samples];
+
+ArduinoFFT FFT = ArduinoFFT(vReal, vImag, samples, samplingFrequency);
+
 void setup() {
   Serial.begin(9600);
   
   // Initialize FastLED
   FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
   FastLED.setBrightness(50); // Set initial brightness
+
+  samplingPeriodUs = round(1000000 * (1.0 / samplingFrequency));
 
   // Initialize BLE
   if (!BLE.begin()) {
@@ -134,7 +151,94 @@ void patternBlinking() {
 }
 
 void patternSynced() {
-//
+    // Step 1: Read the microphone
+  for (int i = 0; i < samples; i++) {
+    microseconds = micros();    
+    vReal[i] = analogRead(MIC_PIN); // A conversion takes about 1uS on an ESP32
+    vImag[i] = 0;
+    while (micros() < (microseconds + samplingPeriodUs)) {
+      // do nothing to wait
+    }
+  }
+
+  // Step 2: Compute the FFT
+  FFT.windowing(FFT_WIN_TYP_HAMMING, FFT_FORWARD);
+  FFT.compute(FFT_FORWARD);
+  FFT.complexToMagnitude();
+
+  // Step 3: Find the peak frequency
+  double peak = FFT.majorPeak();
+  Serial.print("Peak Frequency: ");
+  Serial.println(peak);
+
+  // Step 4: Compute volume
+  double volume = 0;
+  for (int i = 2; i < (samples / 2); i++) {
+    volume += vReal[i];
+  }
+  volume = volume / (samples / 2);
+  Serial.print("Volume: ");
+  Serial.println(volume);
+
+  // Normalize the volume to the range of 0 to 1023
+  double normalizedVolume = volume / 1023.0;
+  Serial.print("Normalized Volume: ");
+  Serial.println(normalizedVolume);
+
+  // Step 5: Update the LEDs based on volume and pitch
+  updateLEDs(normalizedVolume, peak);  // Using normalized volume
+
+  // Step 6: Show the LEDs
+  FastLED.show();
+}
+
+void updateLEDs(double volume, double pitch) {
+  // Define the 2D array to represent the LED matrix
+  bool ledMatrix[NUM_STRIPS][NUM_LEDS_PER_STRIP] = {false};
+
+  // Map volume to the height of the bar
+  int barHeight = map(volume * 1023 / 3, 0, 1023, 0, NUM_LEDS_PER_STRIP / 2);
+
+  // Map pitch to the strip index (range from 0 to NUM_STRIPS - 1)
+  int stripIndex = map(pitch, 0, samplingFrequency / 2, 0, NUM_STRIPS / 2);
+
+  // Clear the LED array
+  memset(leds, 0, NUM_LEDS * sizeof(CRGB));
+
+  // Update the ledMatrix based on volume and pitch without overlapping
+  for (int strip = 0; strip < NUM_STRIPS; strip++) {
+    for (int i = 0; i < barHeight; i++) {
+      if (strip % 2 == 0) {
+        ledMatrix[strip][i] = true;
+      } else {
+        ledMatrix[strip][NUM_LEDS_PER_STRIP - 1 - i] = true;
+      }
+    }
+  }
+
+  // Convert the 2D ledMatrix to the FastLED CRGB array
+  for (int strip = 0; strip < NUM_STRIPS; strip++) {
+    for (int i = 0; i < NUM_LEDS_PER_STRIP; i++) {
+      if (ledMatrix[strip][i]) {
+        int ledIndex = strip * NUM_LEDS_PER_STRIP + i;
+        // Example: set color directly based on currentPalette
+        switch (currentPalette) {
+          case 0:
+            leds[ledIndex] = CRGB::Blue;
+            break;
+          case 1:
+            leds[ledIndex] = CHSV(i * (255 / NUM_LEDS), 255, 255); // Example for rainbow effect
+            break;
+          // Add cases for other palettes as needed
+          default:
+            leds[ledIndex] = CRGB::Black; // Default case
+            break;
+        }
+      }
+    }
+  }
+
+  FastLED.show();
 }
 
 void patternRain() {
