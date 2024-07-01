@@ -122,9 +122,66 @@ void updateBrightness() {
   FastLED.setBrightness(currentBrightness);
   FastLED.show();
 }
-
 void patternBlinking() {
-  // Empty pattern function
+    // Calculate the number of LEDs to light up (approximately 1/5 of NUM_LEDS)
+    int numLEDsToLight = NUM_LEDS / 5;
+
+    // Array to keep track of which LEDs are lit
+    bool ledState[NUM_LEDS];
+    memset(ledState, 0, NUM_LEDS * sizeof(bool)); // Initialize all LEDs as off
+
+    // Randomly select LEDs to turn on
+    for (int i = 0; i < numLEDsToLight; i++) {
+        int randomIndex = random(NUM_LEDS); // Generate a random index
+        ledState[randomIndex] = true; // Mark the LED at randomIndex as on
+    }
+
+    // Set LEDs based on random selection
+    for (int i = 0; i < NUM_LEDS; i++) {
+        if (ledState[i]) {
+            // Set LED color based on currentPalette
+            switch (currentPalette) {
+                case 0: // Blue
+                    leds[i] = CRGB::Blue;
+                    break;
+                case 1: // Rainbow
+                    leds[i] = CHSV(random(256), 255, 255); // Random hue for rainbow effect
+                    break;
+                case 2: // Ocean
+                    leds[i] = CRGB::Aqua;
+                    break;
+                case 3: // Lava
+                    leds[i] = CRGB::OrangeRed;
+                    break;
+                case 4: // Forest
+                    leds[i] = CRGB::ForestGreen;
+                    break;
+                case 5: // Love
+                    leds[i] = CRGB::DeepPink;
+                    break;
+                default:
+                    leds[i] = CRGB::White; // Default to white if unknown palette
+                    break;
+            }
+        } else {
+            leds[i] = CRGB::Black; // Turn off LEDs not selected
+        }
+    }
+
+    // Show the LEDs
+    FastLED.show();
+
+    // Delay for 5 seconds
+    delay(1000);
+
+    // Turn off all LEDs
+    fill_solid(leds, NUM_LEDS, CRGB::Black);
+
+    // Show the LEDs
+    FastLED.show();
+
+    // Delay for 5 seconds again before exiting the function
+    delay(1000);
 }
 
 void patternSynced() {
@@ -166,56 +223,157 @@ void patternSynced() {
 }
 
 void updateLEDs(double bandAmplitudes[]) {
-  bool ledMatrix[NUM_STRIPS][NUM_LEDS] = {false};
+    bool ledMatrix[NUM_STRIPS][NUM_LEDS_PER_STRIP] = {false}; // Corrected to NUM_LEDS_PER_STRIP
 
-  double maxAmplitude = 0;
-  for (int i = 0; i < NUM_STRIPS; i++) {
-    if (bandAmplitudes[i] > maxAmplitude) {
-      maxAmplitude = bandAmplitudes[i];
+    double maxAmplitude = 0;
+    for (int i = 0; i < NUM_STRIPS; i++) {
+        if (bandAmplitudes[i] > maxAmplitude) {
+            maxAmplitude = bandAmplitudes[i];
+        }
     }
-  }
 
-  double filteredAmplitudes[NUM_STRIPS];
-  for (int i = 0; i < NUM_STRIPS; i++) {
-    if (i == 0) {
-      filteredAmplitudes[i] = (bandAmplitudes[i] + bandAmplitudes[i + 1]) / 2.0;
-    } else if (i == NUM_STRIPS - 1) {
-      filteredAmplitudes[i] = (bandAmplitudes[i] + bandAmplitudes[i - 1]) / 2.0;
-    } else {
-      filteredAmplitudes[i] = (bandAmplitudes[i - 1] + bandAmplitudes[i] + bandAmplitudes[i + 1]) / 3.0;
+    double filteredAmplitudes[NUM_STRIPS];
+    for (int i = 0; i < NUM_STRIPS; i++) {
+        if (i == 0) {
+            filteredAmplitudes[i] = (bandAmplitudes[i] + bandAmplitudes[i + 1]) / 2.0;
+        } else if (i == NUM_STRIPS - 1) {
+            filteredAmplitudes[i] = (bandAmplitudes[i] + bandAmplitudes[i - 1]) / 2.0;
+        } else {
+            filteredAmplitudes[i] = (bandAmplitudes[i - 1] + bandAmplitudes[i] + bandAmplitudes[i + 1]) / 3.0;
+        }
     }
-  }
 
-  for (int strip = 0; strip < NUM_STRIPS; strip++) {
-    int barHeight = map(filteredAmplitudes[strip], 0, maxAmplitude, 0, NUM_LEDS_PER_STRIP);
-    Serial.print("Strip ");
-    Serial.print(strip);
-    Serial.print(": ");
-    Serial.println(barHeight);
+    for (int strip = 0; strip < NUM_STRIPS; strip++) {
+        int barHeight = map(filteredAmplitudes[strip], 0, maxAmplitude, 0, NUM_LEDS_PER_STRIP);
 
-    for (int i = 0; i < barHeight; i++) {
-      if (strip % 2 == 0) {
-        ledMatrix[strip][i] = true;
-      } else {
-        ledMatrix[strip][NUM_LEDS_PER_STRIP - 1 - i] = true;
-      }
+        // Determine start and end indices based on strip parity
+        int startIndex = (strip % 2 == 0) ? 0 : (NUM_LEDS_PER_STRIP - 1);
+        int endIndex = (strip % 2 == 0) ? barHeight : (NUM_LEDS_PER_STRIP - 1 - barHeight);
+
+        for (int i = startIndex; strip % 2 == 0 ? (i < endIndex) : (i > endIndex); strip % 2 == 0 ? i++ : i--) {
+            ledMatrix[strip][i] = true;
+        }
     }
-  }
 
-  memset(leds, 0, NUM_LEDS * sizeof(CRGB));
+    memset(leds, 0, NUM_LEDS * sizeof(CRGB));
 
-  for (int strip = 0; strip < NUM_STRIPS; strip++) {
-    for (int i = 0; i < NUM_LEDS_PER_STRIP; i++) {
-      if (ledMatrix[strip][i]) {
-        int ledIndex = strip * NUM_LEDS_PER_STRIP + i;
-        setLEDColorPalette(currentPalette);
-      }
+    for (int strip = 0; strip < NUM_STRIPS; strip++) {
+        for (int i = 0; i < NUM_LEDS_PER_STRIP; i++) {
+            if (ledMatrix[strip][i]) {
+                int ledIndex = strip * NUM_LEDS_PER_STRIP + i;
+                switch (currentPalette) {
+                    case 0: // Blue
+                        leds[ledIndex] = CRGB::Blue;
+                        break;
+                    case 1: // Rainbow
+                        leds[ledIndex] = CHSV(random(256), 255, 255); // Random hue for rainbow effect
+                        break;
+                    case 2: // Ocean
+                        leds[ledIndex] = CRGB::Aqua;
+                        break;
+                    case 3: // Lava
+                        leds[ledIndex] = CRGB::OrangeRed;
+                        break;
+                    case 4: // Forest
+                        leds[ledIndex] = CRGB::ForestGreen;
+                        break;
+                    case 5: // Love
+                        leds[ledIndex] = CRGB::DeepPink;
+                        break;
+                    default:
+                        leds[ledIndex] = CRGB::White; // Default to white if unknown palette
+                        break;
+                }
+            }
+        }
     }
-  }
+
+    FastLED.show();
 }
 
 void patternRain() {
-  // Empty pattern function
+  // Define some constants for the raindrop effect
+  const int maxDrops = 50;     // Maximum number of simultaneous drops
+  const int dropLength = 5;    // Length of each raindrop trail
+
+  static int dropPositions[NUM_STRIPS][maxDrops]; // Array to store drop positions
+  static int dropSpeeds[NUM_STRIPS][maxDrops];    // Array to store drop speeds
+  static int dropCount = 0;    // Current number of drops
+
+  // Read mic input or use a mock value for demonstration
+  int micValue = analogRead(MIC_PIN);
+
+  // Add new drops based on mic input
+  if (micValue > 500) {
+    int numDrops = map(micValue, 500, 4095, 1, maxDrops); // Map mic value to number of drops
+    for (int i = 0; i < numDrops; i++) {
+      if (dropCount < maxDrops) {
+        int strip = random(NUM_STRIPS); // Randomly select a strip
+        dropPositions[strip][dropCount] = NUM_LEDS_PER_STRIP - 1; // Add new drop at the end of the strip
+        dropSpeeds[strip][dropCount] = random(1, 4); // Random speed for each drop
+        dropCount++;
+      }
+    }
+  }
+
+  // Update drop positions and display drops on LEDs
+  for (int strip = 0; strip < NUM_STRIPS; strip++) {
+    bool reverse = (strip % 2 == 1); // Reverse direction on odd-numbered strips
+    for (int d = 0; d < dropCount; d++) {
+      // Move drop up the strip
+      dropPositions[strip][d] -= dropSpeeds[strip][d] * (reverse ? -1 : 1);
+      // If drop reaches beginning of strip, remove it
+      if (dropPositions[strip][d] < -dropLength) {
+        dropPositions[strip][d] = NUM_LEDS_PER_STRIP;
+      }
+    }
+  }
+
+  // Clear LEDs
+  memset(leds, 0, NUM_LEDS * sizeof(CRGB));
+
+  // Draw drops on LEDs with color defined by currentPalette
+  for (int strip = 0; strip < NUM_STRIPS; strip++) {
+    bool reverse = (strip % 2 == 1); // Reverse direction on odd-numbered strips
+    for (int d = 0; d < dropCount; d++) {
+      int dropPos = dropPositions[strip][d];
+      if (dropPos >= 0 && dropPos < NUM_LEDS_PER_STRIP) {
+        // Draw drop trail
+        for (int len = 0; len < dropLength; len++) {
+          int ledIndex = strip * NUM_LEDS_PER_STRIP + (reverse ? (NUM_LEDS_PER_STRIP - 1 - dropPos - len) : (dropPos + len));
+          if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
+            // Determine color based on currentPalette
+            switch (currentPalette) {
+              case 0: // Blue
+                leds[ledIndex] = CRGB::Blue;
+                break;
+              case 1: // Rainbow
+                leds[ledIndex] = CHSV(random(256), 255, 255); // Random hue for rainbow effect
+                break;
+              case 2: // Ocean
+                leds[ledIndex] = CRGB::Aqua;
+                break;
+              case 3: // Lava
+                leds[ledIndex] = CRGB::OrangeRed;
+                break;
+              case 4: // Forest
+                leds[ledIndex] = CRGB::ForestGreen;
+                break;
+              case 5: // Love
+                leds[ledIndex] = CRGB::DeepPink;
+                break;
+              default:
+                leds[ledIndex] = CRGB::White; // Default to white if unknown palette
+                break;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  FastLED.show();
+  delay(50);  // Adjust delay as needed for visual effect
 }
 
 void patternFire() {
@@ -391,7 +549,6 @@ void handleBLEData() {
     } else {
       // Position on, set LED colors based on the color palette
       currentPalette = colorPalette;
-      setLEDColorPalette(colorPalette);
     }
 
     if (autoBrightness == 0) { // Only update brightness if autoBrightness is off and position is on
