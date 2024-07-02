@@ -70,6 +70,8 @@ void setup() {
   for (int i = 0; i < NUM_SAMPLES; i++) {
     ldrValues[i] = analogRead(LDR_PIN);
   }
+
+  clearBitmap();
 }
 
 int getAverageLDRValue() {
@@ -122,7 +124,89 @@ void updateBrightness() {
   FastLED.setBrightness(currentBrightness);
   FastLED.show();
 }
+
+double* getFFT() {
+    static double bandAmplitudes[NUM_STRIPS];  // Static to ensure it exists after the function returns
+    static double magnitudes[5];               // Static to ensure it exists after the function returns
+
+    for (int i = 0; i < samples; i++) {
+        microseconds = micros();
+        vReal[i] = analogRead(MIC_PIN); // A conversion takes about 1uS on an ESP32
+        vImag[i] = 0;
+        while (micros() < (microseconds + samplingPeriodUs)) {
+            // do nothing to wait
+        }
+    }
+
+    FFT.windowing(FFT_WIN_TYP_HAMMING, FFT_FORWARD);
+    FFT.compute(FFT_FORWARD);
+    FFT.complexToMagnitude();
+
+    // Get magnitudes for specific frequencies
+    int frequencies[5] = {125, 300, 600, 1200, 3000};
+
+    for (int i = 0; i < 5; i++) {
+        int index = (frequencies[i] * samples) / samplingFrequency;
+        magnitudes[i] = vReal[index];
+    }
+
+    int bandSizemag = samples / (2 * NUM_STRIPS);
+
+    for (int band = 0; band < NUM_STRIPS; band++) {
+        double sum = 0;
+        for (int i = band * bandSizemag; i < (band + 1) * bandSizemag; i++) {
+            sum += vReal[i];
+        }
+        magnitudes[band] = sum / bandSizemag;
+    }
+
+    // Log the magnitudes
+    Serial.println("Magnitudes for specific frequencies:");
+    for (int i = 0; i < 5; i++) {
+        Serial.print("Frequency ");
+        Serial.print(frequencies[i]);
+        Serial.print("Hz: ");
+        Serial.println(magnitudes[i]);
+    }
+
+    int bandSize = samples / (2 * NUM_STRIPS);
+
+    for (int band = 0; band < NUM_STRIPS; band++) {
+        double sum = 0;
+        for (int i = band * bandSize; i < (band + 1) * bandSize; i++) {
+            sum += vReal[i];
+        }
+        bandAmplitudes[band] = sum / bandSize;
+    }
+
+    for (int band = 0; band < NUM_STRIPS; band++) {
+        Serial.print("Band ");
+        Serial.print(band);
+        Serial.print(": ");
+        Serial.println(bandAmplitudes[band]);
+    }
+
+    return bandAmplitudes;
+}
+
 void patternBlinking() {
+    double* bandAmplitudes = getFFT();
+
+    // Calculate the total amplitude
+    double totalAmplitude = 0;
+    for (int band = 0; band < NUM_STRIPS; band++) {
+        totalAmplitude += bandAmplitudes[band];
+    }
+
+    Serial.println(totalAmplitude);
+
+    // Calculate the delay based on the total amplitude
+    int delayTime = 2000 - (totalAmplitude/5); // Adjust this factor as needed
+    if (delayTime < 100) {
+        delayTime = 100; // Minimum delay time
+    }
+    Serial.println(delayTime);
+
     // Calculate the number of LEDs to light up (approximately 1/5 of NUM_LEDS)
     int numLEDsToLight = NUM_LEDS / 5;
 
@@ -172,7 +256,7 @@ void patternBlinking() {
     FastLED.show();
 
     // Delay for 5 seconds
-    delay(1000);
+    delay(delayTime);
 
     // Turn off all LEDs
     fill_solid(leds, NUM_LEDS, CRGB::Black);
@@ -181,41 +265,11 @@ void patternBlinking() {
     FastLED.show();
 
     // Delay for 5 seconds again before exiting the function
-    delay(1000);
+    delay(delayTime);
 }
 
 void patternSynced() {
-  for (int i = 0; i < samples; i++) {
-    microseconds = micros();
-    vReal[i] = analogRead(MIC_PIN); // A conversion takes about 1uS on an ESP32
-    vImag[i] = 0;
-    while (micros() < (microseconds + samplingPeriodUs)) {
-      // do nothing to wait
-    }
-  }
-
-  FFT.windowing(FFT_WIN_TYP_HAMMING, FFT_FORWARD);
-  FFT.compute(FFT_FORWARD);
-  FFT.complexToMagnitude();
-
-  double bandAmplitudes[NUM_STRIPS] = {0};
-  int bandSize = samples / (2 * NUM_STRIPS);
-
-  for (int band = 0; band < NUM_STRIPS; band++) {
-    double sum = 0;
-    for (int i = band * bandSize; i < (band + 1) * bandSize; i++) {
-      sum += vReal[i];
-    }
-    bandAmplitudes[band] = sum / bandSize;
-  }
-
-  for (int band = 0; band < NUM_STRIPS; band++) {
-    Serial.print("Band ");
-    Serial.print(band);
-    Serial.print(": ");
-    Serial.println(bandAmplitudes[band]);
-  }
-
+  double* bandAmplitudes = getFFT();  
   updateLEDs(bandAmplitudes);
 
   FastLED.show();
@@ -223,9 +277,9 @@ void patternSynced() {
 }
 
 void updateLEDs(double bandAmplitudes[]) {
-    bool ledMatrix[NUM_STRIPS][NUM_LEDS_PER_STRIP] = {false}; // Corrected to NUM_LEDS_PER_STRIP
+    bool ledMatrix[NUM_STRIPS][NUM_LEDS_PER_STRIP] = {false};
 
-    double maxAmplitude = 0;
+    double maxAmplitude = 0; // Corrected declaration
     for (int i = 0; i < NUM_STRIPS; i++) {
         if (bandAmplitudes[i] > maxAmplitude) {
             maxAmplitude = bandAmplitudes[i];
@@ -246,16 +300,21 @@ void updateLEDs(double bandAmplitudes[]) {
     for (int strip = 0; strip < NUM_STRIPS; strip++) {
         int barHeight = map(filteredAmplitudes[strip], 0, maxAmplitude, 0, NUM_LEDS_PER_STRIP);
 
-        // Determine start and end indices based on strip parity
         int startIndex = (strip % 2 == 0) ? 0 : (NUM_LEDS_PER_STRIP - 1);
         int endIndex = (strip % 2 == 0) ? barHeight : (NUM_LEDS_PER_STRIP - 1 - barHeight);
 
-        for (int i = startIndex; strip % 2 == 0 ? (i < endIndex) : (i > endIndex); strip % 2 == 0 ? i++ : i--) {
-            ledMatrix[strip][i] = true;
+        if (strip % 2 == 0) {
+            for (int i = startIndex; i < endIndex; i++) {
+                ledMatrix[strip][i] = true;
+            }
+        } else {
+            for (int i = startIndex; i > endIndex; i--) {
+                ledMatrix[strip][i] = true;
+            }
         }
     }
 
-    memset(leds, 0, NUM_LEDS * sizeof(CRGB));
+    memset(leds, 0, NUM_STRIPS * NUM_LEDS_PER_STRIP * sizeof(CRGB));
 
     for (int strip = 0; strip < NUM_STRIPS; strip++) {
         for (int i = 0; i < NUM_LEDS_PER_STRIP; i++) {
@@ -291,93 +350,128 @@ void updateLEDs(double bandAmplitudes[]) {
     FastLED.show();
 }
 
-void patternRain() {
-  // Define some constants for the raindrop effect
-  const int maxDrops = 50;     // Maximum number of simultaneous drops
-  const int dropLength = 5;    // Length of each raindrop trail
-
-  static int dropPositions[NUM_STRIPS][maxDrops]; // Array to store drop positions
-  static int dropSpeeds[NUM_STRIPS][maxDrops];    // Array to store drop speeds
-  static int dropCount = 0;    // Current number of drops
-
-  // Read mic input or use a mock value for demonstration
-  int micValue = analogRead(MIC_PIN);
-
-  // Add new drops based on mic input
-  if (micValue > 500) {
-    int numDrops = map(micValue, 500, 4095, 1, maxDrops); // Map mic value to number of drops
-    for (int i = 0; i < numDrops; i++) {
-      if (dropCount < maxDrops) {
-        int strip = random(NUM_STRIPS); // Randomly select a strip
-        dropPositions[strip][dropCount] = NUM_LEDS_PER_STRIP - 1; // Add new drop at the end of the strip
-        dropSpeeds[strip][dropCount] = random(1, 4); // Random speed for each drop
-        dropCount++;
-      }
-    }
-  }
-
-  // Update drop positions and display drops on LEDs
-  for (int strip = 0; strip < NUM_STRIPS; strip++) {
-    bool reverse = (strip % 2 == 1); // Reverse direction on odd-numbered strips
-    for (int d = 0; d < dropCount; d++) {
-      // Move drop up the strip
-      dropPositions[strip][d] -= dropSpeeds[strip][d] * (reverse ? -1 : 1);
-      // If drop reaches beginning of strip, remove it
-      if (dropPositions[strip][d] < -dropLength) {
-        dropPositions[strip][d] = NUM_LEDS_PER_STRIP;
-      }
-    }
-  }
-
-  // Clear LEDs
-  memset(leds, 0, NUM_LEDS * sizeof(CRGB));
-
-  // Draw drops on LEDs with color defined by currentPalette
-  for (int strip = 0; strip < NUM_STRIPS; strip++) {
-    bool reverse = (strip % 2 == 1); // Reverse direction on odd-numbered strips
-    for (int d = 0; d < dropCount; d++) {
-      int dropPos = dropPositions[strip][d];
-      if (dropPos >= 0 && dropPos < NUM_LEDS_PER_STRIP) {
-        // Draw drop trail
-        for (int len = 0; len < dropLength; len++) {
-          int ledIndex = strip * NUM_LEDS_PER_STRIP + (reverse ? (NUM_LEDS_PER_STRIP - 1 - dropPos - len) : (dropPos + len));
-          if (ledIndex >= 0 && ledIndex < NUM_LEDS) {
-            // Determine color based on currentPalette
-            switch (currentPalette) {
-              case 0: // Blue
-                leds[ledIndex] = CRGB::Blue;
-                break;
-              case 1: // Rainbow
-                leds[ledIndex] = CHSV(random(256), 255, 255); // Random hue for rainbow effect
-                break;
-              case 2: // Ocean
-                leds[ledIndex] = CRGB::Aqua;
-                break;
-              case 3: // Lava
-                leds[ledIndex] = CRGB::OrangeRed;
-                break;
-              case 4: // Forest
-                leds[ledIndex] = CRGB::ForestGreen;
-                break;
-              case 5: // Love
-                leds[ledIndex] = CRGB::DeepPink;
-                break;
-              default:
-                leds[ledIndex] = CRGB::White; // Default to white if unknown palette
-                break;
+void updateRainLEDs() {  
+    for (int strip = 0; strip < NUM_STRIPS; strip++) {
+        for (int led = 0; led < NUM_LEDS_PER_STRIP; led++) {
+            int ledIndex = strip * NUM_LEDS_PER_STRIP + led;
+            if (bitmap[strip][led]) {
+                // On LEDs are determined by the current palette
+                switch (currentPalette) {
+                    case 0: // Blue
+                        leds[ledIndex] = CRGB::Blue;
+                        break;
+                    case 1: // Rainbow
+                        leds[ledIndex] = CHSV(random(256), 255, 255); // Random hue for rainbow effect
+                        break;
+                    case 2: // Ocean
+                        leds[ledIndex] = CRGB::Aqua;
+                        break;
+                    case 3: // Lava
+                        leds[ledIndex] = CRGB::OrangeRed;
+                        break;
+                    case 4: // Forest
+                        leds[ledIndex] = CRGB::ForestGreen;
+                        break;
+                    case 5: // Love
+                        leds[ledIndex] = CRGB::DeepPink;
+                        break;
+                    default:
+                        leds[ledIndex] = CRGB::White; // Default to white if unknown palette
+                        break;
+                }
+            } else {
+                // Off LEDs are black (off)
+                leds[ledIndex] = CRGB::Black;
             }
-          }
         }
+    }
+    FastLED.show();
+}
+
+void createRainPattern() {
+  // Shift existing raindrops down
+  for (int strip = 0; strip < NUM_STRIPS; strip++) {
+    if (strip % 2 == 0) {
+      // For even-numbered strips, reverse
+      for (int led = 0; led < NUM_LEDS_PER_STRIP - 1; led++) {
+        bitmap[strip][led] = bitmap[strip][led + 1];
       }
+      // 1 in 8 to create a raindrop
+      bitmap[strip][NUM_LEDS_PER_STRIP - 1] = random(8) == 0;
+    } else {
+      for (int led = NUM_LEDS_PER_STRIP - 1; led > 0; led--) {
+        bitmap[strip][led] = bitmap[strip][led - 1];
+      }
+      bitmap[strip][0] = random(8) == 0;
     }
   }
+}
 
-  FastLED.show();
-  delay(50);  // Adjust delay as needed for visual effect
+void patternRain() {
+  createRainPattern();
+  updateRainLEDs();
+  delay(100);
 }
 
 void patternFire() {
-  // Empty pattern function
+    double* bandAmplitudes = getFFT();
+
+    // Normalize band amplitudes to the range of 0 to NUM_LEDS_PER_STRIP
+    double maxAmplitude = *std::max_element(bandAmplitudes, bandAmplitudes + NUM_STRIPS);
+    for (int band = 0; band < NUM_STRIPS; band++) {
+        bandAmplitudes[band] = map(bandAmplitudes[band], 0, maxAmplitude, 0, NUM_LEDS_PER_STRIP);
+    }
+    
+    // Clear the bitmap array
+    clearBitmap();
+    
+    // Update the bitmap based on the band amplitudes
+    for (int strip = 0; strip < NUM_STRIPS; strip++) {
+      int centerIndex = NUM_LEDS_PER_STRIP / 2;
+      int amplitude = bandAmplitudes[strip];
+
+      for (int i = 0; i < amplitude; i++) {
+        int index1 = centerIndex + i; // Right side
+        int index2 = centerIndex - i; // Left side
+
+        // Update LED on the current strip
+        if (index1 < NUM_LEDS_PER_STRIP) {
+            bitmap[strip][index1] = true;
+        }
+        if (index2 >= 0) {
+            bitmap[strip][index2] = true;
+        }
+
+        // Update LEDs on the neighboring strips to create a circular effect
+        for (int offset = 1; offset <= i; offset++) {
+            int stripAbove = strip + offset;
+            int stripBelow = strip - offset;
+            if (stripAbove < NUM_STRIPS) {
+                if (index1 < NUM_LEDS_PER_STRIP) {
+                    bitmap[stripAbove][index1] = true;
+                }
+                if (index2 >= 0) {
+                    bitmap[stripAbove][index2] = true;
+                }
+            }
+            if (stripBelow >= 0) {
+                if (index1 < NUM_LEDS_PER_STRIP) {
+                    bitmap[stripBelow][index1] = true;
+                }
+                if (index2 >= 0) {
+                    bitmap[stripBelow][index2] = true;
+                }
+              }
+          }
+        }
+    }
+
+
+    // Update the LED strip based on the bitmap array
+    updateRainLEDs();
+
+    // Adjust the delay to control the speed of the fire effect
+    delay(50);
 }
 
 void patternGrowing() {
@@ -390,10 +484,13 @@ void patternHeartPulse() {
     int offset = 0; // current position
     int step = 1;
     int iterations = 0; // Initialize the counter
+    Serial.println("here1");
 
     while (iterations < 24) { // Run the loop only 24 times
         createHeartPattern(offset);
+        Serial.println("here2");
         updateHeartLEDs();
+        Serial.println("here3");
 
         // "gradual" speed increase, speeds up below centre
         if (offset > 0) {
@@ -415,7 +512,7 @@ void patternHeartPulse() {
 
 void clearBitmap() {
     for (int i = 0; i < NUM_STRIPS; i++) {
-        for (int j = 0; j < NUM_LEDS; j++) {
+        for (int j = 0; j < NUM_LEDS_PER_STRIP; j++) {
             bitmap[i][j] = false;
         }
     }
@@ -423,11 +520,36 @@ void clearBitmap() {
 
 void updateHeartLEDs() {
     for (int strip = 0; strip < NUM_STRIPS; strip++) {
-        for (int led = 0; led < NUM_LEDS; led++) {
+        for (int led = 0; led < NUM_LEDS_PER_STRIP; led++) {
+            int ledIndex = strip * NUM_LEDS_PER_STRIP + led;
             if (bitmap[strip][led]) {
-                leds[strip * NUM_LEDS + led] = CRGB::Red;  // On LEDs are red (heart color)
+                // On LEDs are determined by the current palette
+                switch (currentPalette) {
+                    case 0: // Blue
+                        leds[ledIndex] = CRGB::Blue;
+                        break;
+                    case 1: // Rainbow
+                        leds[ledIndex] = CHSV(random(256), 255, 255); // Random hue for rainbow effect
+                        break;
+                    case 2: // Ocean
+                        leds[ledIndex] = CRGB::Aqua;
+                        break;
+                    case 3: // Lava
+                        leds[ledIndex] = CRGB::OrangeRed;
+                        break;
+                    case 4: // Forest
+                        leds[ledIndex] = CRGB::ForestGreen;
+                        break;
+                    case 5: // Love
+                        leds[ledIndex] = CRGB::DeepPink;
+                        break;
+                    default:
+                        leds[ledIndex] = CRGB::White; // Default to white if unknown palette
+                        break;
+                }
             } else {
-                leds[strip * NUM_LEDS + led] = CRGB::Black;  // Off LEDs are black (off)
+                // Off LEDs are black (off)
+                leds[ledIndex] = CRGB::Black;
             }
         }
     }
@@ -447,23 +569,23 @@ void createHeartPattern(int offset) {
     };
     
     // Starting position to find centre
-    int startX = (NUM_LEDS - 11) / 2;
+    int startX = (NUM_LEDS_PER_STRIP - 5) / 2;
     
     // Map the heart pattern to the LED strips
     for (int i = 0; i < 5; i++) {
         for (int j = 0; j < 11; j++) {
             int targetX = startX + j + offset;
-            if (targetX >= 0 && targetX < NUM_LEDS) {
-                if (i % 2 == 0) {
-                    // Even strips: downwards
-                    bitmap[i][targetX] = heartPattern[i][j];
-                } else {
-                    // Odd strips: upwards
-                    bitmap[i][targetX] = heartPattern[i][j];
-                }
+            if (targetX >= 0 && targetX < NUM_LEDS_PER_STRIP) {
+              if (i % 2 == 0) {
+                // Even strips: downwards
+                bitmap[i][startX + j + offset - 1] = heartPattern[i][j];
+              } else {
+                // Odd strips: upwards
+                bitmap[i][startX + 5 - j - offset] = heartPattern[i][j];
             }
         }
     }
+  }
 }
 
 void handleBLEData() {
